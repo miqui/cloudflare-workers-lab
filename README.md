@@ -132,3 +132,22 @@ Requests 1-5 return `200` with `x-ratelimit-remaining` counting down from 4 to 0
 returns `429 {"error":"Too Many Requests"}`. Each client IP (`cf-connecting-ip`) gets its own
 quota, so hitting the endpoint from a different IP (or waiting out the 60s window) resets it.
 `GET /` has no rate-limit headers at all — it's excluded from the `/api/*` middleware.
+
+### Load test with k6
+
+[`load-test/rate-limiter.js`](load-test/rate-limiter.js) runs two scenarios: a single-client
+burst that exceeds the quota (asserts 5×200 then 429s), and a simulated multi-client scenario
+that spoofs `cf-connecting-ip` per VU to verify per-client isolation. Requires the
+[k6](https://k6.io) binary (`brew install k6` or see [k6 install docs](https://grafana.com/docs/k6/latest/set-up/install-k6/)).
+
+```bash
+# against local wrangler dev (npm run dev, http://localhost:8787)
+k6 run load-test/rate-limiter.js
+
+# against your deployed Worker
+k6 run -e BASE_URL=https://cloudflare-workers-lab.<your-subdomain>.workers.dev load-test/rate-limiter.js
+```
+
+Note: the multi-client scenario's spoofed `cf-connecting-ip` header only has effect against
+local `wrangler dev` — a real Cloudflare deployment overwrites that header at the edge with the
+actual client IP, so every VU running from the same machine will share one quota bucket there.
