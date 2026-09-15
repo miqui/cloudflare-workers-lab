@@ -93,15 +93,39 @@ The automated tests (`npm test`) already cover the rate limiter's behavior end-t
 the real Workers runtime (quota exhaustion, per-IP isolation, `/` staying exempt) — see the
 `/api/* rate limiting (Durable Object)` block in `test/index.spec.ts`.
 
-To see it live by hand, fire more requests than the limit (5 per 60s) at any `/api/*` route
-and watch the `x-ratelimit-*` headers and the 429 on the 6th request:
+To see it live by hand, first inspect a single response to confirm the headers are there:
+
+```bash
+curl -s -D - -o /dev/null http://localhost:8787/api/hello/World
+```
+
+You should see `x-ratelimit-limit: 5`, `x-ratelimit-remaining: 4`, and `x-ratelimit-reset`
+(a unix timestamp) alongside the `200`.
+
+Then fire more requests than the limit (5 per 60s) and watch the status code and remaining
+count on each one:
 
 ```bash
 # against local wrangler dev (npm run dev, http://localhost:8787)
-for i in 1 2 3 4 5 6; do curl -s -i http://localhost:8787/api/hello/World | head -6; echo; done
+BASE=http://localhost:8787
+for i in $(seq 1 6); do
+  curl -s -o /dev/null -w "request $i -> %{http_code}\n" "$BASE/api/hello/World"
+done
 
 # against your deployed Worker
-for i in 1 2 3 4 5 6; do curl -s -i https://cloudflare-workers-lab.<your-subdomain>.workers.dev/api/hello/World | head -6; echo; done
+BASE=https://cloudflare-workers-lab.<your-subdomain>.workers.dev
+for i in $(seq 1 6); do
+  curl -s -o /dev/null -w "request $i -> %{http_code}\n" "$BASE/api/hello/World"
+done
+```
+
+If you want the full headers on each attempt instead of just the status code:
+
+```bash
+for i in $(seq 1 6); do
+  echo "--- request $i ---"
+  curl -s -D - -o /dev/null "$BASE/api/hello/World" | grep -i ratelimit
+done
 ```
 
 Requests 1-5 return `200` with `x-ratelimit-remaining` counting down from 4 to 0; request 6
