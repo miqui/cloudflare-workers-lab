@@ -1,8 +1,33 @@
 import { Hono } from 'hono';
 
+export { RateLimiter } from './durable-objects/rate-limiter';
+
 type Bindings = Cloudflare.Env;
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+const RATE_LIMIT = 5;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+
+app.use('/api/*', async (c, next) => {
+  const clientKey = c.req.header('cf-connecting-ip') ?? 'anonymous';
+  const id = c.env.RATE_LIMITER.idFromName(clientKey);
+  const stub = c.env.RATE_LIMITER.get(id);
+  const { allowed, remaining, resetAt } = await stub.consume(
+    RATE_LIMIT,
+    RATE_LIMIT_WINDOW_MS,
+  );
+
+  c.header('X-RateLimit-Limit', String(RATE_LIMIT));
+  c.header('X-RateLimit-Remaining', String(remaining));
+  c.header('X-RateLimit-Reset', String(Math.ceil(resetAt / 1000)));
+
+  if (!allowed) {
+    return c.json({ error: 'Too Many Requests' }, 429);
+  }
+
+  await next();
+});
 
 function isValidName(name: string): boolean {
   if (name.length === 0 || name.length > 100) return false;

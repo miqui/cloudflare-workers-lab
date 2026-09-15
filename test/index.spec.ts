@@ -63,3 +63,49 @@ describe('cloudflare-workers-lab worker', () => {
     expect(body.path).toBe('/does/not/exist');
   });
 });
+
+describe('/api/* rate limiting (Durable Object)', () => {
+  function requestFrom(ip: string): Request {
+    return makeRequest('/api/headers', { headers: { 'cf-connecting-ip': ip } });
+  }
+
+  it('allows up to the limit then returns 429', async () => {
+    const ip = '203.0.113.1';
+
+    for (let i = 1; i <= 5; i++) {
+      const res = await worker.fetch(requestFrom(ip));
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-RateLimit-Limit')).toBe('5');
+      expect(res.headers.get('X-RateLimit-Remaining')).toBe(String(5 - i));
+    }
+
+    const blocked = await worker.fetch(requestFrom(ip));
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get('X-RateLimit-Remaining')).toBe('0');
+    const body = await blocked.json<{ error: string }>();
+    expect(body.error).toBe('Too Many Requests');
+  });
+
+  it('tracks separate quotas per client IP', async () => {
+    const ipA = '203.0.113.2';
+    const ipB = '203.0.113.3';
+
+    for (let i = 0; i < 5; i++) {
+      const res = await worker.fetch(requestFrom(ipA));
+      expect(res.status).toBe(200);
+    }
+    expect((await worker.fetch(requestFrom(ipA))).status).toBe(429);
+
+    const resB = await worker.fetch(requestFrom(ipB));
+    expect(resB.status).toBe(200);
+    expect(resB.headers.get('X-RateLimit-Remaining')).toBe('4');
+  });
+
+  it('does not rate limit the root health check route', async () => {
+    for (let i = 0; i < 10; i++) {
+      const res = await worker.fetch(makeRequest('/'));
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-RateLimit-Limit')).toBeNull();
+    }
+  });
+});
